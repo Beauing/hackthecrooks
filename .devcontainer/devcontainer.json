@@ -1,0 +1,22 @@
+{
+    "name": "Solana Trading Bot",
+    "build": {
+        "dockerfile": "../Dockerfile",
+        "context": ".."
+    },
+    "forwardPorts": [8000],
+    "settings": {
+        "terminal.integrated.shell.linux": "/bin/bash",
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": true,
+        "python.formatting.provider": "black"
+    },
+    "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-azuretools.vscode-docker",
+        "visualstudioexptteam.vscodeintellicode"
+    ],
+    "postCreateCommand": "bash ./setup.sh"
+}

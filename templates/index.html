@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solana Trading Bot</title>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-3xl font-bold mb-8">Solana Trading Bot</h1>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Configuration</h2>
+                
+                <!-- Wallet Connection -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Private Key</label>
+                    <input type="password" id="privateKey" class="w-full p-2 border rounded">
+                    <button onclick="connectWallet()" class="mt-2 bg-blue-500 text-white px-4 py-2 rounded">
+                        Connect Wallet
+                    </button>
+                    <p id="walletStatus" class="mt-2 text-sm text-gray-600"></p>
+                </div>
+
+                <!-- Token Pair -->
+                <div class="mb-6">
+                    <label class="block text-sm font-medium text-gray-700 mb-2">Token Pair Address</label>
+                    <input type="text" id="pairAddress" class="w-full p-2 border rounded">
+                    <button onclick="setTokenPair()" class="mt-2 bg-blue-500 text-white px-4 py-2 rounded">
+                        Set Token Pair
+                    </button>
+                    <p id="pairStatus" class="mt-2 text-sm text-gray-600"></p>
+                </div>
+
+                <!-- Trading Controls -->
+                <div>
+                    <button onclick="toggleTrading()" id="tradingButton" 
+                            class="bg-green-500 text-white px-4 py-2 rounded">
+                        Start Trading
+                    </button>
+                    <p id="tradingStatus" class="mt-2 text-sm text-gray-600"></p>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-lg shadow p-6">
+                <h2 class="text-xl font-semibold mb-4">Price Chart</h2>
+                <div id="priceChart"></div>
+                <div class="mt-4">
+                    <p id="currentPrice" class="text-lg font-semibold"></p>
+                    <p id="tradingSignal" class="text-lg"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws;
+        let isTrading = false;
+
+        function initWebSocket() {
+            ws = new WebSocket(`ws://${window.location.host}/ws`);
+            
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'price_update') {
+                    updateChart(data.data);
+                    updateStatus(data.data);
+                } else if (data.type === 'error') {
+                    showError(data.data.message);
+                }
+            };
+
+            ws.onclose = function() {
+                setTimeout(initWebSocket, 1000);
+            };
+        }
+
+        async function connectWallet() {
+            const privateKey = document.getElementById('privateKey').value;
+            try {
+                const response = await fetch('/connect-wallet', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ private_key: privateKey })
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    document.getElementById('walletStatus').textContent = 
+                        `Connected: ${data.public_key.substr(0, 10)}...`;
+                }
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function setTokenPair() {
+            const pairAddress = document.getElementById('pairAddress').value;
+            try {
+                const response = await fetch('/set-token-pair', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ pair_address: pairAddress })
+                });
+                const data = await response.json();
+                if (data.status === 'success') {
+                    document.getElementById('pairStatus').textContent = 
+                        `Pair set: ${pairAddress.substr(0, 10)}...`;
+                }
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        async function toggleTrading() {
+            try {
+                const response = await fetch('/toggle-trading', { method: 'POST' });
+                const data = await response.json();
+                isTrading = data.is_trading;
+                const button = document.getElementById('tradingButton');
+                button.textContent = isTrading ? 'Stop Trading' : 'Start Trading';
+                button.classList.toggle('bg-green-500');
+                button.classList.toggle('bg-red-500');
+                document.getElementById('tradingStatus').textContent = 
+                    isTrading ? 'Trading active' : 'Trading stopped';
+            } catch (error) {
+                showError(error.message);
+            }
+        }
+
+        function updateChart(data) {
+            const trace = {
+                x: data.chart_data.map(point => new Date(point.timestamp * 1000)),
+                y: data.chart_data.map(point => point.price),
+                type: 'scatter',
+                name: 'Price'
+            };
+
+            const layout = {
+                title: 'Token Price',
+                xaxis: { title: 'Time' },
+                yaxis: { title: 'Price (USD)' }
+            };
+
+            Plotly.newPlot('priceChart', [trace], layout);
+        }
+
+        function updateStatus(data) {
+            document.getElementById('currentPrice').textContent = 
+                `Current Price: $${data.price.toFixed(4)}`;
+            document.getElementById('tradingSignal').textContent = 
+                `Signal: ${data.signal}`;
+        }
+
+        function showError(message) {
+            alert(`Error: ${message}`);
+        }
+
+        initWebSocket();
+    </script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# Solana dependencies
+solana==0.30.2
+solders>=0.18.1
+
+# Async HTTP requests
+aiohttp>=3.8.5
+requests>=2.31.0
+
+# Web framework
+fastapi>=0.100.0
+uvicorn>=0.22.0
+
+# Data handling and computation
+numpy>=1.24.3
+pandas>=2.0.3
+
+# Cryptography and encoding
+cryptography>=41.0.1
+base58>=2.1.1
+
+# Date and time handling
+python-dateutil>=2.8.2
+
+# Websockets for real-time updates
+websockets>=11.0.3
+
+# Template engine
+jinja2>=3.1.2
