@@ -1,3 +1,9 @@
+import aiohttp
+import asyncio
+import json
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+
 async def fetch_trading_pairs(self):
     """Find potential trading pairs with better error handling"""
     self.log_activity("Scanning for trading pairs", "Scanning")

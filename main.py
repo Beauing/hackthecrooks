@@ -1,4 +1,5 @@
 from trading.strategies import AdvancedTradingStrategy, TradingSignal
+from trading.indicators import TechnicalIndicators
 from trading.risk_manager import RiskManager, Position
 from trading.token_analysis import EnhancedTokenAnalysis
 from trading.pattern_detection import SuspiciousPatternDetector
@@ -74,6 +75,19 @@ class EnhancedTradingBot:
             'average_trade_duration': 0,
             'win_rate': 0
         }
+    
+    async def should_trade_token(self, token_address: str) -> bool:
+        """Determine if token should be traded based on analysis"""
+        # Get token analysis
+        analysis = await self.analyze_token(token_address)
+        if not analysis:
+            return False
+            
+        return analysis.get('safety_score', 0) >= self.config.get('min_safety_score', 0.6)
+
+    async def log_activity(self, word, error):
+        print(word)
+        return None
 
     async def analyze_token(self, token_address: str) -> Dict:
         """Analyze token with special handling for SOL"""
@@ -455,93 +469,162 @@ class EnhancedTradingBot:
             return []
 
     async def process_trading_signal(self, data: Dict) -> Dict:
-        """Process trading signal with enhanced safety checks"""
-        token_address = data.get('token_address')
-        
-        # Verify token safety
-        if not await self.should_trade_token(token_address):
-            return {
-                'signal': 'HOLD',
-                'reason': 'Token safety check failed',
-                'warnings': self.trading_state['analyzed_tokens'].get(token_address, {}).get('warnings', [])
-            }
-
-        # Extract price data
-        prices = [point['price'] for point in self.trading_state['chart_data']]
-        volumes = [point.get('volume', 0) for point in self.trading_state['chart_data']]
-        highs = [point.get('high', point['price']) for point in self.trading_state['chart_data']]
-        lows = [point.get('low', point['price']) for point in self.trading_state['chart_data']]
-
-        # Get trading signal
-        signal = self.strategy.get_advanced_signal(prices, volumes, highs, lows)
-
-        # Calculate volatility
-        volatility = self.strategy.indicators.calculate_atr(highs, lows, prices)
-
-        # Get wallet balance
-        wallet_pubkey = Keypair.from_secret_key(
-            base58.b58decode(self.trading_state['wallet_key'])
-        ).public_key
-        balance = await self.client.get_balance(wallet_pubkey)
-        wallet_balance = float(balance.value) / 1e9
-
-        # Validate trade with risk manager
-        can_trade = self.risk_manager.validate_trade(
-            signal.signal,
-            signal.confidence,
-            prices[-1],
-            wallet_balance,
-            volatility / prices[-1]
-        )
-
-        if can_trade and signal.signal != "HOLD":
-            # Get risk-adjusted parameters
-            trade_params = self.risk_manager.get_risk_adjusted_parameters(
-                prices[-1],
-                wallet_balance,
-                signal.confidence,
-                volatility / prices[-1]
-            )
-
-            try:
-                result = await self.execute_trade(
-                    signal.signal,
-                    trade_params['position_size'],
-                    prices[-1],
-                    trade_params['stop_loss'],
-                    trade_params['take_profit']
-                )
-
-                if result:
-                    position = Position(
-                        entry_price=prices[-1],
-                        size=trade_params['position_size'],
-                        entry_time=datetime.now(),
-                        stop_loss=trade_params['stop_loss'],
-                        take_profit=trade_params['take_profit']
-                    )
-                    self.trading_state['positions'].append(position)
-
-            except Exception as e:
+        """Process trading signal with enhanced safety checks and validation"""
+        try:
+            token_address = data.get('token_address')
+            self.log_activity(f"Processing signal for token: {token_address[:8]}...", "Trading")  # Added logging
+            
+            # Verify token safety
+            if not await self.should_trade_token(token_address):
+                self.log_activity("Token failed safety check", "Trading")  # Added logging
                 return {
-                    'error': str(e),
-                    'signal': signal.signal,
-                    'confidence': signal.confidence,
-                    'indicators': signal.indicators
+                    'signal': 'HOLD',
+                    'reason': 'Token safety check failed',
+                    'warnings': self.trading_state['analyzed_tokens'].get(token_address, {}).get('warnings', [])
                 }
 
-        # Monitor existing positions
-        await self.monitor_positions(prices[-1])
+            # Add the logging for chart data validation
+            if not self.trading_state.get('chart_data') or len(self.trading_state['chart_data']) < 2:
+                self.log_activity("Insufficient price history", "Trading")  # Added logging
+                return {
+                    'signal': 'HOLD',
+                    'reason': 'Insufficient price history',
+                    'warnings': ['Need more price data for analysis']
+                }
 
-        return {
-            'signal': signal.signal,
-            'confidence': signal.confidence,
-            'indicators': signal.indicators,
-            'can_trade': can_trade,
-            'positions': len(self.trading_state['positions']),
-            'safety_score': self.trading_state['analyzed_tokens'].get(token_address, {}).get('safety_score', 0),
-            'performance_metrics': self.performance_metrics
-        }
+            # Extract price data with validation
+            try:
+                prices = [float(point['price']) for point in self.trading_state['chart_data']]
+                volumes = [float(point.get('volume', 0)) for point in self.trading_state['chart_data']]
+                highs = [float(point.get('high', point['price'])) for point in self.trading_state['chart_data']]
+                lows = [float(point.get('low', point['price'])) for point in self.trading_state['chart_data']]
+            except (KeyError, ValueError) as e:
+                return {
+                    'signal': 'HOLD',
+                    'reason': f'Error processing price data: {str(e)}',
+                    'warnings': ['Invalid price data format']
+                }
+
+            # Check for minimum data points
+            if len(prices) < self.strategy.long_window:
+                return {
+                    'signal': 'HOLD',
+                    'reason': f'Need {self.strategy.long_window} data points, have {len(prices)}',
+                    'warnings': ['Insufficient data for strategy']
+                }
+
+            self.log_activity("Generating trading signal...", "Trading")  # Added logging
+            signal = self.strategy.get_advanced_signal(prices, volumes, highs, lows)
+            if signal:
+                self.log_activity(f"Signal generated: {signal.signal} with confidence {signal.confidence}", "Trading")  # Added logging
+            if not signal:
+                return {
+                    'signal': 'HOLD',
+                    'reason': 'Failed to generate signal',
+                    'warnings': ['Strategy calculation error']
+                }
+
+            # Calculate volatility
+            try:
+                volatility = self.strategy.indicators.calculate_atr(highs, lows, prices)
+            except Exception as e:
+                return {
+                    'signal': 'HOLD',
+                    'reason': f'Volatility calculation error: {str(e)}',
+                    'warnings': ['Cannot calculate risk metrics']
+                }
+
+            # Get wallet balance
+            try:
+                wallet_pubkey = Keypair.from_secret_key(
+                    base58.b58decode(self.trading_state['wallet_key'])
+                ).public_key
+                balance = await self.client.get_balance(wallet_pubkey)
+                wallet_balance = float(balance.value) / 1e9
+            except Exception as e:
+                return {
+                    'signal': 'HOLD',
+                    'reason': f'Wallet error: {str(e)}',
+                    'warnings': ['Cannot access wallet']
+                }
+
+            # Validate trade with risk manager
+            try:
+                can_trade = self.risk_manager.validate_trade(
+                    signal.signal,
+                    signal.confidence,
+                    prices[-1],
+                    wallet_balance,
+                    volatility / prices[-1]
+                )
+            except Exception as e:
+                return {
+                    'signal': 'HOLD',
+                    'reason': f'Risk validation error: {str(e)}',
+                    'warnings': ['Risk check failed']
+                }
+
+            if can_trade and signal.signal != "HOLD":
+                self.log_activity("Trade conditions met, calculating parameters...", "Trading")  # Added logging
+                try:
+                    # Get risk-adjusted parameters
+                    trade_params = self.risk_manager.get_risk_adjusted_parameters(
+                        prices[-1],
+                        wallet_balance,
+                        signal.confidence,
+                        volatility / prices[-1]
+                    )
+
+                    # Execute trade
+                    self.log_activity(f"Executing {signal.signal} trade...", "Trading")  # Added logging
+                    result = await self.execute_trade(
+                        signal.signal,
+                        trade_params['position_size'],
+                        prices[-1],
+                        trade_params['stop_loss'],
+                        trade_params['take_profit']
+                    )
+
+                    if result:
+                        self.log_activity(f"Trade executed successfully", "Trading")  # Added logging
+                        position = Position(
+                            entry_price=prices[-1],
+                            size=trade_params['position_size'],
+                            entry_time=datetime.now(),
+                            stop_loss=trade_params['stop_loss'],
+                            take_profit=trade_params['take_profit']
+                        )
+                        self.trading_state['positions'].append(position)
+                        self.log_activity(f"Position added to portfolio", "Trading")  # Added logging
+
+                except Exception as e:
+                    self.log_activity(f"Trade execution failed: {str(e)}", "Error")  # Added logging
+                    return {
+                        'signal': 'HOLD',
+                        'reason': f'Trade execution error: {str(e)}',
+                        'warnings': ['Failed to execute trade']
+                    }
+
+            # Monitor existing positions
+            await self.monitor_positions(prices[-1])
+
+            return {
+                'signal': signal.signal,
+                'confidence': signal.confidence,
+                'indicators': signal.indicators,
+                'can_trade': can_trade,
+                'positions': len(self.trading_state['positions']),
+                'safety_score': self.trading_state['analyzed_tokens'].get(token_address, {}).get('safety_score', 0),
+                'performance_metrics': self.performance_metrics
+            }
+
+        except Exception as e:
+            self.log_activity(f"Critical error in signal processing: {str(e)}", "Error")  # Added logging
+            return {
+                'signal': 'HOLD',
+                'reason': f'Critical error: {str(e)}',
+                'warnings': ['System error occurred']
+            }
 
     async def monitor_positions(self, current_price: float):
         """Monitor and manage open positions with enhanced risk management"""

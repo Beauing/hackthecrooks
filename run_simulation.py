@@ -7,6 +7,8 @@ from main import EnhancedTradingBot
 from trading.api_handler import fetch_trading_pairs, get_backup_pairs, filter_promising_pairs
 import aiohttp
 import time
+import json
+from typing import Dict, List, Optional
 
 class AutomatedSimulator:
     def __init__(self, initial_balance: float = 100.0):
@@ -102,16 +104,77 @@ class AutomatedSimulator:
         
         return status_table
 
-    async def process_pair(self, pair):
-        """Process a single trading pair"""
+    async def execute_simulated_trade(self, 
+                                signal_type: str, 
+                                position_size: float, 
+                                price: float, 
+                                token_address: str) -> Dict:
+        """Execute a simulated trade and update portfolio"""
         try:
-            # Get base token address instead of pair address
+            self.log_activity(
+                f"Executing {signal_type} trade for {position_size:.2f} USD at ${price:.2f}",
+                "Trading"
+            )
+
+            if signal_type == "BUY":
+                if self.simulated_wallet['SOL'] < position_size:
+                    self.log_activity("Insufficient balance for trade", "Trading")
+                    return {'success': False, 'error': 'Insufficient balance'}
+
+                token_amount = position_size / price
+                self.simulated_wallet['SOL'] -= position_size
+                self.simulated_wallet['tokens'][token_address] = token_amount
+                
+                self.log_activity(
+                    f"Bought {token_amount:.6f} tokens at ${price:.2f}",
+                    "Trading"
+                )
+
+            elif signal_type == "SELL":
+                if token_address not in self.simulated_wallet['tokens']:
+                    self.log_activity("No tokens to sell", "Trading")
+                    return {'success': False, 'error': 'No tokens'}
+
+                token_amount = self.simulated_wallet['tokens'][token_address]
+                received = token_amount * price
+                self.simulated_wallet['SOL'] += received
+                del self.simulated_wallet['tokens'][token_address]
+                
+                self.log_activity(
+                    f"Sold {token_amount:.6f} tokens at ${price:.2f}",
+                    "Trading"
+                )
+
+            # Update current balance
+            self.current_balance = self.simulated_wallet['SOL'] + sum(
+                amount * price 
+                for token, amount in self.simulated_wallet['tokens'].items()
+            )
+
+            self.log_activity(f"Updated balance: ${self.current_balance:.2f}", "Portfolio")
+
+            return {
+                'success': True,
+                'type': signal_type,
+                'size': position_size,
+                'price': price,
+                'token': token_address,
+                'balance': self.current_balance
+            }
+
+        except Exception as e:
+            self.log_activity(f"Trade execution error: {str(e)}", "Error")
+            return {'success': False, 'error': str(e)}
+
+    async def process_pair(self, pair):
+        """Process a single trading pair with comprehensive logging and validation"""
+        try:
             token_address = pair.get('baseToken', {}).get('address')
             if not token_address:
                 self.log_activity("Missing base token address in pair", "Error")
                 return
             
-            self.log_activity(f"Processing pair data: {pair}", "Debug")  # Debug log
+            self.log_activity(f"Processing pair data: {pair}", "Debug")
             self.log_activity(f"Processing token: {token_address[:8]}...", "Analysis")
             
             # Run token analysis
@@ -123,31 +186,48 @@ class AutomatedSimulator:
                 return
             
             self.log_activity(f"Analysis completed with result: {analysis}", "Analysis")
-        
+            
             # Check safety score
             if 'safety_score' not in analysis:
                 self.log_activity("Missing safety score in analysis", "Error")
                 return
                 
             if analysis['safety_score'] >= self.bot.config.get('min_safety_score', 0.6):
-                # Get trading signal
+                # Get trading signal with logging
+                self.log_activity("Generating trading signal...", "Trading")
                 signal = await self.bot.process_trading_signal({
                     'token_address': token_address,
                     'price': float(pair.get('priceUsd', 0)),
                     'data': pair
                 })
                 
+                self.log_activity(f"Signal received: {signal.get('signal')} with confidence {signal.get('confidence', 0)}", "Trading")
+                
                 # Execute trade if we get a signal
-                if signal['signal'] != "HOLD":
-                    await self.execute_simulated_trade(
-                        signal,
-                        {
-                            'token_address': token_address,
-                            'price': pair.get('priceUsd', 0)
-                        },
-                        analysis['safety_score']
+                if signal.get('signal') != "HOLD":
+                    position_size = self.current_balance * 0.1  # 10% of balance
+                    self.log_activity(f"Attempting trade with size: ${position_size:.2f}", "Trading")
+                    
+                    trade_result = await self.execute_simulated_trade(
+                        signal['signal'],
+                        position_size,
+                        float(pair.get('priceUsd', 0)),
+                        token_address
                     )
                     
+                    if trade_result.get('success'):
+                        self.log_activity(
+                            f"Trade successful - New balance: ${self.current_balance:.2f}",
+                            "Trading"
+                        )
+                    else:
+                        self.log_activity(
+                            f"Trade failed: {trade_result.get('error', 'Unknown error')}",
+                            "Error"
+                        )
+            else:
+                self.log_activity(f"Token failed safety check. Score: {analysis['safety_score']}", "Analysis")
+                        
         except Exception as e:
             import traceback
             self.log_activity(f"Error processing pair: {str(e)}", "Error")
