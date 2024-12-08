@@ -201,7 +201,7 @@ class AutomatedSimulator:
                     'data': pair
                 })
                 
-                self.log_activity(f"Signal received: {signal.get('signal')} with confidence {signal.get('confidence', 0)}", "Trading")
+                self.log_activity(f"Signal received: {signal.get('signal')} with confidence {signal.get('confidence', 0)} {signal.get('reasons')} {signal.get('warnings')}", "Trading")
                 
                 # Execute trade if we get a signal
                 if signal.get('signal') != "HOLD":
