@@ -47,7 +47,7 @@ class EnhancedTradingBot:
         # Configuration
         self.config = {
             'min_safety_score': 0.7,        # Minimum token safety score
-            'scan_interval': 3600,          # Token scanning interval (1 hour)
+            'scan_interval': 15,          # Token scanning interval (1 hour)
             'analysis_window': 24 * 3600,   # Analysis window (24 hours)
             'max_positions': 5,             # Maximum concurrent positions
             'alert_threshold': 0.4,         # Alert threshold for risk score
